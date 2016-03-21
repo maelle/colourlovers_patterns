@@ -1,0 +1,143 @@
+---
+title: "Using colourlovers patterns with ggplot2"
+author: "M. Salmon"
+date: "21 de marzo de 2016"
+output: html_document
+---
+
+# Motivation
+The [colourlovers package](https://github.com/leeper/colourlovers) connects R to the COLOURlovers API. Using the package, one can find colours, palettes, and patterns along with their evaluation.
+
+In the README of the package Thomas Leeper wrote "Patterns are images created on COLOURlovers using a specified palette of colors. They serve as examples of how to use the palette in practice.". I think we could do more with them and use patterns for decorating figures.
+
+I opened an [issue](https://github.com/leeper/colourlovers/issues/4) a while ago about this idea. Since then, I've come up with a solution for decorating a geom_bar. It's not a general solution (yet?) but this code would be easy to modify to apply it to other analyses.
+
+This document is a draft for a future vignette I'd like to submit to the colourlovers package.
+
+```{r, warning = FALSE, message = FALSE}
+library("dplyr")
+library("tidyr")
+library("httr")
+library("grid")
+library("ggplot2")
+library("colourlovers")
+
+```
+
+# General comments on using patterns
+A pattern is a square image that I convert to a raster. This raster is a matrix with 200 rows and 200 columns. In this matrix $x_{i,j}$ represents the hex code of the colour of a pixel. Below I show how to get a pattern figure and how to plot it on its own.
+
+```{r, cache = TRUE}
+# get pattern
+catsBlue <- clpattern(id = "3363032")
+# get the URL of the picture corresponding to the pattern
+imageURL <- catsBlue$imageUrl
+# get the picture
+ picture <-  content(GET(as.character(imageURL)))
+# convert it to a raster
+img <- as.raster(picture)
+# plot it!
+plot(img)
+
+```
+
+This pattern can also be seen as a puzzle piece: one can copy the pattern several times and put each copy side by side and/or pile them up and get something that looks homogeneous with no problem at the border of each piece.
+
+In ggplot2, Il add the patterns with geom_point. The main issue will be to re-size puzzle pieces (how big should be a single puzzle piece for the graph to look nice?), to paste pieces together (now many puzzle pieces?), and to crop the puzzle (the puzzle should not be bigger than the bar it covers, for instance).
+
+# mtcars or mtcats?
+
+In this example I'll decorate the very classical example of ggplot2 geom_bar.
+
+Below is the original example.
+
+```{r}
+# Normal plot
+c <- ggplot(mtcars, aes(factor(cyl)))
+c <- c + geom_bar(width = .5,
+                  aes(fill = factor(cyl)))+
+  theme(text = element_text(size=20))
+c
+```
+
+Now, since my puzzle pieces are squares, I want the plot to have a x/y ratio such that the distance between two major grid lines on the x axis is the same as the distance as the distance between two major grid lines on the y axis. 
+
+```{r}
+plotInfo <- ggplot_build(c)
+extentX <- diff(plotInfo$panel$ranges[[1]]$x.major_source)[1]
+extentY <- diff(plotInfo$panel$ranges[[1]]$y.major_source)[1]
+c <- c + coord_fixed(ratio = extentX/extentY)
+c
+```
+
+Later I shall use later the information `extentY`.
+
+
+I shall now get three patterns from colourlovers. I went on the website of colourlovers itself to find three patterns using the same template with different colours so I know their IDs.
+
+```{r}
+# get the patterns
+catsBlue <- clpattern(id = "3363032")
+catsRed <- clpattern(id = "2741048")
+catsGreen <- clpattern(id = "2904250")
+patterns <- list(catsRed, catsGreen, catsBlue)
+
+```
+
+I shall first get one colour from each pattern and re-do the figure with these colours. I do this to have a legend later. I don't want to try and reproduce part of the patterns to get them in the legend.
+
+```{r}
+catColors <- NULL
+for (j in 1:3){
+  catColors <- c(catColors, patterns[[j]]$colors[2])
+}
+catColors <- paste0("#", catColors)
+c <- c + scale_fill_manual(values = catColors)
+c
+```
+
+Now I add the patterns by looping other the levels of factor(cyl).
+
+```{r, warning = FALSE}
+for (i in 1:length(levels(factor(mtcars$cyl)))){
+  imageURL <- patterns[[i]]$imageUrl
+  # get pattern
+  picture <-  content(GET(as.character(imageURL)))
+  # picture is a 4 dimensional array
+  img <- as.raster(picture)
+  
+  # we have to repeat the data.frame/pattern
+  # I repeat it so that one extentY = one square
+  xmax <- 1
+  ymax <- sum(mtcars$cyl == levels(factor(mtcars$cyl))[i])
+  
+  size <- ceiling(ymax*2/extentY)
+  
+  img2 <- apply(img,MARGIN=2,function(x) rep(x,size))
+  
+  # from matrix to data.frame
+  img2 <- tbl_df(as.data.frame(as.matrix(img2)))
+  
+  # I change the column names so that they correspond to x coordinates 
+  names(img2) <- seq(i - 0.25, to = i + 0.25, length = ncol(img2))
+  
+  # I transform the img2 so that I have one line = 1 x, 1 y and 1 colour
+  dataPlot <- img2 %>% 
+    mutate(y = seq(from = size/2*extentY, to = 0, length = nrow(img2)))%>% 
+    gather(x, value, 1:ncol(img2)) %>%
+    # filter part of the pattern that doesn't fit in the original bar
+    filter(y <= ymax)  %>%
+    mutate(x = as.numeric(x))
+  
+  
+  c <- c + geom_point(data = dataPlot, aes(x, y), col = dataPlot$value)
+}
+c
+```
+
+I'm not sure how useful this is. For me it was a great occasion to learn new things about graphics!
+
+
+# Squirrel example
+
+I'll add this later.
